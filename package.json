@@ -1,0 +1,44 @@
+{
+  "name": "@webergency-utils/aggregator",
+  "version": "0.0.2",
+  "description": "",
+  "author": "radixxko",
+  "license": "MIT",
+  "main": "dist/aggregator.js",
+  "module": "dist/esm/aggregator.js",
+  "types": "dist/aggregator.d.ts",
+  "exports": {
+    ".": {
+      "import": {
+        "types": "./dist/esm/aggregator.d.ts",
+        "default": "./dist/esm/aggregator.js"
+      },
+      "require": {
+        "types": "./dist/aggregator.d.ts",
+        "default": "./dist/aggregator.js"
+      }
+    }
+  },
+  "files": [
+    "dist/**/*"
+  ],
+  "scripts": {
+    "test": "vitest run",
+    "coverage": "vitest run --coverage",
+    "build": "tsc && tsc -p tsconfig.esm.json && echo '{\"type\":\"module\"}' > dist/esm/package.json",
+    "version": "npm i && npm run build && npm publish --access public"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/webergency-utils/aggregator.git"
+  },
+  "dependencies": {
+    "@webergency-utils/object-hash": "file:../object-hash"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "@vitest/coverage-v8": "^4.1.9",
+    "typescript": "^6.0.3",
+    "vitest": "^4.1.9"
+  }
+}
