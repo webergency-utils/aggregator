@@ -30,7 +30,7 @@
     "test": "vitest run",
     "fuzz": "jazzer fuzz_aggregator.cjs",
     "coverage": "vitest run --coverage",
-    "clean": "rm -rf ./dist/* node_modules package-lock.json && npm i",
+    "clean": "rm -rf ./dist/*",
     "build": "npm run clean && tsup",
     "commit": "node -e \"const version = require('./package.json').version.trim(); require('child_process').execSync('git add . && git commit -m \\\"Version ' + version + '\\\"');\"",
     "version": "npm run build && npm publish --access public && npm run commit && git push"
