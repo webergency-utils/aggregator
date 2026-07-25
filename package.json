@@ -1,6 +1,6 @@
 {
   "name": "@webergency-utils/aggregator",
-  "version": "0.0.2",
+  "version": "0.0.3",
   "description": "A highly efficient TypeScript batching utility that groups, deduplicates, and chunks concurrent asynchronous requests within the same execution tick.",
   "author": "radixxko",
   "license": "MIT",
@@ -40,14 +40,14 @@
     "url": "git+https://github.com/webergency-utils/aggregator.git"
   },
   "dependencies": {
-    "@webergency-utils/object-hash": "^1.0.2"
+    "@webergency-utils/object-hash": "^1.1.2"
   },
   "devDependencies": {
     "@jazzer.js/core": "^4.0.0",
     "@types/node": "^26.0.0",
     "@vitest/coverage-v8": "^4.1.9",
     "tsup": "^8.5.1",
-    "typescript": "^7.0.2",
+    "typescript": "^5.7.0",
     "vitest": "^4.1.9"
   }
 }
