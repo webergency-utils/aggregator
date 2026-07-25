@@ -1,21 +1,25 @@
 {
   "name": "@webergency-utils/aggregator",
   "version": "0.0.2",
-  "description": "",
+  "description": "A highly efficient TypeScript batching utility that groups, deduplicates, and chunks concurrent asynchronous requests within the same execution tick.",
   "author": "radixxko",
   "license": "MIT",
-  "main": "dist/aggregator.js",
-  "module": "dist/esm/aggregator.js",
+  "type": "module",
+  "publishConfig": {
+    "access": "public"
+  },
+  "main": "dist/aggregator.cjs",
+  "module": "dist/aggregator.js",
   "types": "dist/aggregator.d.ts",
   "exports": {
     ".": {
       "import": {
-        "types": "./dist/esm/aggregator.d.ts",
-        "default": "./dist/esm/aggregator.js"
-      },
-      "require": {
         "types": "./dist/aggregator.d.ts",
         "default": "./dist/aggregator.js"
+      },
+      "require": {
+        "types": "./dist/aggregator.d.cts",
+        "default": "./dist/aggregator.cjs"
       }
     }
   },
@@ -24,21 +28,26 @@
   ],
   "scripts": {
     "test": "vitest run",
+    "fuzz": "jazzer fuzz_aggregator.cjs",
     "coverage": "vitest run --coverage",
-    "build": "tsc && tsc -p tsconfig.esm.json && echo '{\"type\":\"module\"}' > dist/esm/package.json",
-    "version": "npm i && npm run build && npm publish --access public"
+    "clean": "rm -rf ./dist/* node_modules package-lock.json && npm i",
+    "build": "npm run clean && tsup",
+    "commit": "node -e \"const version = require('./package.json').version.trim(); require('child_process').execSync('git add . && git commit -m \\\"Version ' + version + '\\\"');\"",
+    "version": "npm run build && npm publish --access public && npm run commit && git push"
   },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/webergency-utils/aggregator.git"
   },
   "dependencies": {
-    "@webergency-utils/object-hash": "file:../object-hash"
+    "@webergency-utils/object-hash": "^1.0.2"
   },
   "devDependencies": {
+    "@jazzer.js/core": "^4.0.0",
     "@types/node": "^26.0.0",
     "@vitest/coverage-v8": "^4.1.9",
-    "typescript": "^6.0.3",
+    "tsup": "^8.5.1",
+    "typescript": "^5.7.0",
     "vitest": "^4.1.9"
   }
 }

@@ -1,8 +1,8 @@
 # @webergency-utils/aggregator
 
-[![NPM Version](https://img.shields.io/npm/v/@webergency-utils/aggregator)](https://www.npmjs.com/package/@webergency-utils/aggregator) [![NPM Downloads](https://img.shields.io/npm/dm/@webergency-utils/aggregator)](https://www.npmjs.com/package/@webergency-utils/aggregator) [![License](https://img.shields.io/npm/l/@webergency-utils/aggregator)](https://github.com/webergency-utils/aggregator/blob/main/LICENSE)
-
 A highly efficient TypeScript batching utility that groups, deduplicates, and chunks concurrent asynchronous requests within the same execution tick. It is designed to optimize database queries, API calls, and external resource fetching by consolidating individual operations into structured batch calls.
+
+[![npm version](https://img.shields.io/npm/v/%40webergency-utils%2Faggregator)](https://www.npmjs.com/package/@webergency-utils/aggregator) [![License](https://img.shields.io/npm/l/%40webergency-utils%2Faggregator)](https://github.com/webergency-utils/aggregator/blob/main/LICENSE) [![Maintenance](https://img.shields.io/badge/maintenance-active-brightgreen.svg)](#maintenance) [![dependencies](https://img.shields.io/badge/dependencies-1-brightgreen.svg)](https://www.npmjs.com/package/@webergency-utils/aggregator?activeTab=dependencies) [![npm downloads](https://img.shields.io/npm/dm/%40webergency-utils%2Faggregator)](https://www.npmjs.com/package/@webergency-utils/aggregator)
 
 ## TL;DR
 
@@ -45,6 +45,12 @@ async function run() {
 }
 
 run();
+```
+
+## Installation
+
+```bash
+npm install @webergency-utils/aggregator
 ```
 
 ## Architecture & Internals
@@ -230,3 +236,11 @@ type AggregatorCallback<ID, V> = (
     1. A dictionary/record where keys are the normalized IDs, and values are of type `V` or `Error`.
     2. An array of values or errors matching the order of input `ids`.
   * If a value in the response is an instance of `Error`, that specific key will be rejected.
+
+## Maintenance
+
+This package is actively maintained.
+
+Bug reports and pull requests are welcome. Security issues and critical
+regressions are prioritized. New features are considered when they align
+with the package's existing scope.
