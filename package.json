@@ -1,6 +1,6 @@
 {
   "name": "@webergency-utils/aggregator",
-  "version": "0.0.3",
+  "version": "0.0.4",
   "description": "A highly efficient TypeScript batching utility that groups, deduplicates, and chunks concurrent asynchronous requests within the same execution tick.",
   "author": "radixxko",
   "license": "MIT",
