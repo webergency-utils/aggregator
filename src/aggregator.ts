@@ -4,14 +4,20 @@ const nextTick = typeof process !== 'undefined' && typeof process.nextTick === '
     ? ( callback: () => unknown ) => process.nextTick( callback )
     : ( callback: () => unknown ) => queueMicrotask( callback );
 
+const defineKey = ( target: Record<any, any>, key: any, value: any ) =>
+{
+    Object.defineProperty( target, key, { value, enumerable : true, configurable : true, writable : true });
+};
+
 export class AggregatorBatchError extends Error
 {
-    errors: Record<any, Error>;
-    resolved: Record<any, any>;
+    errors   : Record<any, Error>;
+    resolved : Record<any, any>;
 
     constructor( errors: Record<any, Error>, resolved: Record<any, any> )
     {
         super( `Batch failed for ${ Object.keys( errors ).length } key(s)` );
+        this.name = 'AggregatorBatchError';
         this.errors = errors;
         this.resolved = resolved;
     }
@@ -23,47 +29,58 @@ export class AggregatorBatchError extends Error
 
     toJSON()
     {
-        return { name: 'AggregatorBatchError', keys: Object.keys( this.errors ) };
+        return { name : 'AggregatorBatchError', keys : Object.keys( this.errors ) };
     }
 }
 
 type Aggregate<ID> =
-{
-    id          : string
-    ids         : Map<any, ID>
-    args        : any[]
-    calls       : { id: ID | ID[], resolve: ( result: any ) => void, reject: ( err: any ) => void }[]
-    completion? : Promise<void>
-    done?       : () => void
-}
+    {
+        id          : string
+        ids         : Map<any, ID>
+        args        : any[]
+        calls       : { id : ID | ID[], resolve : ( result: any ) => void, reject : ( err: any ) => void }[]
+        completion? : Promise<void>
+        done?       : () => void
+    };
 
 export type AggregatorOptions<ID = any> =
-{
-    limit?       : number
-    delay?       : number
-    timeout?     : number
-    normalizeID? : ( id: ID ) => any
-}
+    {
+        limit?       : number
+        delay?       : number
+        timeout?     : number
+        normalizeID? : ( id: ID ) => any
+    };
 
-export type AggregatorCallback<ID, V> = ( ids: ID[], ...args: any[] ) => Record<any, V> | V[] | Promise<Record<any, V> | V[]>;
+export type AggregatorCallback<ID, V> = ( ids: ID[], ...args: any[]) => Record<any, V | Error> | ( V | Error )[] | Promise<Record<any, V | Error> | ( V | Error )[]>;
 
 export default class Aggregator<ID, V>
 {
-    #callback: AggregatorCallback<ID, V>;
-    #aggregates: Map<string, Aggregate<ID>> = new Map();
-    #pending_aggregates: Map<string, Set<Aggregate<ID>>> = new Map();
+    #callback           : AggregatorCallback<ID, V>;
+    #aggregates         : Map<string, Aggregate<ID>> = new Map();
+    #pending_aggregates : Map<string, Set<Aggregate<ID>>> = new Map();
     #aggregating = false;
     #paused = false;
-    #limit: number;
-    #delay: number;
-    #timeout: number | undefined;
-    #normalizeID: ( ( id: ID ) => any ) | undefined;
-    #timer: ReturnType<typeof setTimeout> | undefined;
-    #timeoutQueue: { deadline: number, aggregate: Aggregate<ID> }[] = [];
-    #timeoutTimer: ReturnType<typeof setTimeout> | undefined;
+    #flushId = 0;
+    #limit              : number;
+    #delay              : number;
+    #timeout            : number | undefined;
+    #normalizeID        : (( id: ID ) => any ) | undefined;
+    #timer              : ReturnType<typeof setTimeout> | undefined;
+    #timeoutQueue       : Map<Aggregate<ID>, number> = new Map();
+    #timeoutTimer       : ReturnType<typeof setTimeout> | undefined;
 
     constructor( callback: AggregatorCallback<ID, V>, options?: AggregatorOptions<ID> )
     {
+        if( options?.limit !== undefined && ( !( options.limit >= 1 ) || ( !Number.isInteger( options.limit ) && options.limit !== Infinity )))
+        {
+            throw new RangeError( 'Aggregator limit must be a positive integer or Infinity' );
+        }
+
+        if( options?.timeout !== undefined && !( options.timeout >= 0 ))
+        {
+            throw new RangeError( 'Aggregator timeout must be a non-negative number' );
+        }
+
         this.#callback = callback;
         this.#limit = options?.limit ?? Infinity;
         this.#delay = options?.delay ?? 0;
@@ -84,6 +101,7 @@ export default class Aggregator<ID, V>
             }
 
             this.#aggregating = false;
+            this.#flushId++;
         }
     }
 
@@ -106,21 +124,19 @@ export default class Aggregator<ID, V>
     {
         const deadline = Date.now() + this.#timeout!;
 
-        this.#timeoutQueue.push( { deadline, aggregate } );
+        this.#timeoutQueue.set( aggregate, deadline );
 
         this.#schedule_timeout();
     }
 
     #schedule_timeout()
     {
-        if( this.#timeoutTimer !== undefined ){ return }
+        if( this.#timeoutTimer !== undefined || this.#timeoutQueue.size === 0 ){ return }
 
-        if( this.#timeoutQueue.length === 0 ){ return }
+        const nextDeadline = this.#timeoutQueue.values().next().value!;
+        const delay = Math.max( 0, nextDeadline - Date.now());
 
-        const next = this.#timeoutQueue[0];
-        const delay = Math.max( 0, next.deadline - Date.now() );
-
-        this.#timeoutTimer = setTimeout( () => this.#dispatch_timeouts(), delay );
+        this.#timeoutTimer = setTimeout(() => this.#dispatch_timeouts(), delay );
     }
 
     #dispatch_timeouts()
@@ -129,14 +145,11 @@ export default class Aggregator<ID, V>
 
         const now = Date.now();
 
-        while( this.#timeoutQueue.length > 0 && this.#timeoutQueue[0].deadline <= now + 4 )
+        for( const [ aggregate, deadline ] of this.#timeoutQueue )
         {
-            const { aggregate } = this.#timeoutQueue.shift()!;
+            if( deadline > now + 4 ){ break }
 
-            if( aggregate.calls.length > 0 )
-            {
-                this.#reject( aggregate, new Error( `Timeout of ${ this.#timeout }ms exceeded` ) );
-            }
+            this.#reject( aggregate, new Error( `Timeout of ${ this.#timeout }ms exceeded` ));
         }
 
         this.#schedule_timeout();
@@ -146,12 +159,30 @@ export default class Aggregator<ID, V>
     {
         aggregate.calls = [];
 
+        if( this.#timeoutQueue.delete( aggregate ) && this.#timeoutQueue.size === 0 && this.#timeoutTimer !== undefined )
+        {
+            clearTimeout( this.#timeoutTimer );
+            this.#timeoutTimer = undefined;
+        }
+
         if( this.#aggregates.get( aggregate.id ) === aggregate )
         {
             this.#aggregates.delete( aggregate.id );
+
+            if( this.#aggregates.size === 0 && this.#aggregating )
+            {
+                if( this.#timer !== undefined )
+                {
+                    clearTimeout( this.#timer );
+                    this.#timer = undefined;
+                }
+
+                this.#aggregating = false;
+                this.#flushId++;
+            }
         }
 
-        let pending = this.#pending_aggregates.get( aggregate.id );
+        const pending = this.#pending_aggregates.get( aggregate.id );
 
         if( pending )
         {
@@ -165,7 +196,7 @@ export default class Aggregator<ID, V>
 
     #reject( aggregate: Aggregate<ID>, err: any )
     {
-        for( let call of aggregate.calls )
+        for( const call of aggregate.calls )
         {
             call.reject( err );
         }
@@ -175,28 +206,26 @@ export default class Aggregator<ID, V>
 
     #resolve( aggregate: Aggregate<ID>, result: Record<any, any> )
     {
-        for( let call of aggregate.calls )
+        for( const call of aggregate.calls )
         {
             if( Array.isArray( call.id ))
             {
-                let values = call.id.map( id => result[this.#normalize( id ) as any] );
+                const keys = call.id.map( id => this.#normalize( id ) as any );
+                const values = keys.map( key => result[key]);
 
                 if( values.some( v => v instanceof Error ))
                 {
-                    let errors: Record<any, Error> = {}, resolved: Record<any, any> = {};
+                    const errors: Record<any, Error> = {}, resolved: Record<any, any> = {};
 
-                    call.id.forEach(( id, i ) => values[i] instanceof Error
-                        ? errors[this.#normalize( id ) as any] = values[i]
-                        : resolved[this.#normalize( id ) as any] = values[i]
-                    );
+                    keys.forEach(( key, i ) => defineKey( values[i] instanceof Error ? errors : resolved, key, values[i]));
 
                     call.reject( new AggregatorBatchError( errors, resolved ));
                 }
-                else{ call.resolve( values ) }
+                else { call.resolve( values ) }
             }
             else
             {
-                let value = result[this.#normalize( call.id ) as any];
+                const value = result[this.#normalize( call.id ) as any];
 
                 value instanceof Error ? call.reject( value ) : call.resolve( value );
             }
@@ -219,49 +248,52 @@ export default class Aggregator<ID, V>
         {
             try
             {
-                let result = this.#callback( chunk, ...aggregate.args );
+                const result = this.#callback( chunk, ...aggregate.args );
 
                 return result instanceof Promise ? result : Promise.resolve( result );
             }
             catch( err ){ return Promise.reject( err ) }
         }))
-        .then( chunkResults =>
-        {
-            let combined: Record<any, any> = {};
-
-            for( let i = 0; i < chunks.length; i++ )
+            .then( chunkResults =>
             {
-                let chunkResult = chunkResults[i];
+                const combined: Record<any, any> = Object.create( null );
 
-                if( Array.isArray( chunkResult ))
+                for( let i = 0; i < chunks.length; i++ )
                 {
-                    chunks[i].forEach(( id, j ) => combined[this.#normalize( id ) as any] = chunkResult[j] );
-                }
-                else
-                {
-                    Object.assign( combined, chunkResult );
-                }
-            }
+                    const chunkResult = chunkResults[i];
 
-            this.#resolve( aggregate, combined );
-        })
-        .catch( err => this.#reject( aggregate, err ));
+                    if( Array.isArray( chunkResult ))
+                    {
+                        chunks[i].forEach(( id, j ) => combined[this.#normalize( id ) as any] = chunkResult[j]);
+                    }
+                    else if( chunkResult && typeof chunkResult === 'object' )
+                    {
+                        Object.assign( combined, chunkResult );
+                    }
+                }
+
+                this.#resolve( aggregate, combined );
+            })
+            .catch( err => this.#reject( aggregate, err ));
     }
 
     #aggregated_calls()
     {
         this.#aggregating = false;
         this.#timer = undefined;
+        this.#flushId++;
 
-        for( let aggregate of this.#aggregates.values() )
+        const aggregates = [ ...this.#aggregates.values() ];
+
+        this.#aggregates.clear();
+
+        for( const aggregate of aggregates )
         {
-            this.#aggregates.delete( aggregate.id );
-
             let pending = this.#pending_aggregates.get( aggregate.id );
 
             if( !pending )
             {
-                this.#pending_aggregates.set( aggregate.id, pending = new Set() );
+                this.#pending_aggregates.set( aggregate.id, pending = new Set());
             }
 
             pending.add( aggregate );
@@ -274,45 +306,74 @@ export default class Aggregator<ID, V>
 
     #schedule_flush()
     {
-        if( this.#paused ){ return }
+        if( this.#paused || this.#aggregating ){ return }
 
-        if( !this.#aggregating )
+        this.#aggregating = true;
+
+        if( this.#delay > 0 )
         {
-            this.#aggregating = true;
+            this.#timer = setTimeout(() => this.#aggregated_calls(), this.#delay );
+        }
+        else
+        {
+            const flushId = ++this.#flushId;
 
-            if( this.#delay > 0 )
+            nextTick(() =>
             {
-                this.#timer = setTimeout( () => this.#aggregated_calls(), this.#delay );
-            }
-            else
-            {
-                nextTick( this.#aggregated_calls.bind( this ));
-            }
+                if( this.#flushId === flushId )
+                {
+                    this.#aggregated_calls();
+                }
+            });
         }
     }
 
-    execute( id: ID, ...args: any[] ): Promise<V>;
-    execute( ids: ID[], ...args: any[] ): Promise<V[]>;
-    execute( ids: ID | ID[], ...args: any[] )
+    execute( id: ID, ...args: any[]): Promise<V>;
+    execute( ids: ID[], ...args: any[]): Promise<V[]>;
+    execute( ids: ID | ID[], ...args: any[])
     {
+        if( Array.isArray( ids ) && !ids.length ){ return Promise.resolve([]) }
+
         return new Promise(( resolve, reject ) =>
         {
-            let aggregateID = objectStringify( args ), pending, aggregate, pending_results: Promise<void>[] = [];
+            const aggregateID = args.length ? objectStringify( args ) : '', pending = this.#pending_aggregates.get( aggregateID ), pending_results: Promise<void>[] = [];
 
-            if( pending = this.#pending_aggregates.get( aggregateID ))
+            if( pending )
             {
                 if( Array.isArray( ids ))
                 {
-                    let unique = new Map<any, ID>(), result: Record<any, any> = {};
+                    const unique = new Map<any, ID>(), result: Record<any, any> = Object.create( null );
 
-                    for( let id of ids )
+                    const recordResolved = ( batchIds: ID[], partialResult: any[]) =>
+                    {
+                        batchIds.forEach(( id, i ) => result[this.#normalize( id ) as any] = partialResult[i]);
+                    };
+
+                    const recordRejected = ( batchIds: ID[], err: any ) =>
+                    {
+                        if( err instanceof AggregatorBatchError )
+                        {
+                            batchIds.forEach( id =>
+                            {
+                                const key = this.#normalize( id ) as any;
+
+                                result[key] = Object.prototype.hasOwnProperty.call( err.errors, key ) ? err.errors[key] : err.resolved[key];
+                            });
+                        }
+                        else
+                        {
+                            batchIds.forEach( id => result[this.#normalize( id ) as any] = err );
+                        }
+                    };
+
+                    for( const id of ids )
                     {
                         unique.set( this.#normalize( id ), id );
                     }
 
-                    for( let aggregate of pending )
+                    for( const aggregate of pending )
                     {
-                        let _ids: ID[] = [];
+                        const _ids: ID[] = [];
 
                         for( const [ serialized, id ] of unique )
                         {
@@ -325,78 +386,74 @@ export default class Aggregator<ID, V>
 
                         if( _ids.length )
                         {
-                            pending_results.push( new Promise<void>( resolve =>
+                            pending_results.push( new Promise<void>( done =>
                             {
-                                aggregate.calls.push({ id: _ids, resolve: ( partial_result: any ) =>
-                                {
-                                    _ids.forEach(( id, i ) => result[this.#normalize( id ) as any] = partial_result[i] );
-
-                                    resolve();
-                                },
-                                reject: ( err: any ) =>
-                                {
-                                    if( err instanceof AggregatorBatchError )
+                                aggregate.calls.push(
                                     {
-                                        _ids.forEach( id => result[this.#normalize( id ) as any] = err.errors[this.#normalize( id ) as any] ?? err );
-                                    }
-                                    else
-                                    {
-                                        _ids.forEach( id => result[this.#normalize( id ) as any] = err );
-                                    }
-
-                                    resolve();
-                                }});
+                                        id      : _ids,
+                                        resolve : ( partial_result: any ) => { recordResolved( _ids, partial_result ); done() },
+                                        reject  : ( err: any ) => { recordRejected( _ids, err ); done() }
+                                    });
                             }));
                         }
                     }
 
                     if( pending_results.length )
                     {
-                        let original_resolve = resolve, original_ids = ids;
+                        const original_resolve = resolve, original_reject = reject, original_ids = ids;
 
                         ids = [ ...unique.values() ];
 
-                        resolve = async( partial_result: any ) =>
+                        const settle = async() =>
                         {
-                            ( ids as ID[] ).forEach(( id: ID, i: number ) => result[this.#normalize( id ) as any] = partial_result[i] );
-
                             await Promise.all( pending_results );
 
-                            let values = original_ids.map( id => result[this.#normalize( id ) as any] );
+                            const keys = original_ids.map( id => this.#normalize( id ) as any );
+                            const values = keys.map( key => result[key]);
 
                             if( values.some( v => v instanceof Error ))
                             {
-                                let errors: Record<any, Error> = {}, resolved: Record<any, any> = {};
+                                const errors: Record<any, Error> = {}, resolved: Record<any, any> = {};
 
-                                original_ids.forEach(( id, i ) => values[i] instanceof Error
-                                    ? errors[this.#normalize( id ) as any] = values[i]
-                                    : resolved[this.#normalize( id ) as any] = values[i]
-                                );
+                                keys.forEach(( key, i ) => defineKey( values[i] instanceof Error ? errors : resolved, key, values[i]));
 
-                                return reject( new AggregatorBatchError( errors, resolved ));
+                                original_reject( new AggregatorBatchError( errors, resolved ));
                             }
+                            else { original_resolve( values ) }
+                        };
 
-                            original_resolve( values );
+                        if( !unique.size )
+                        {
+                            settle();
+
+                            return; 
                         }
 
-                        if( !unique.size ){ return resolve([]) }
+                        resolve = ( partial_result: any ) => { recordResolved( ids as ID[], partial_result ); settle() };
+                        reject = ( err: any ) => { recordRejected( ids as ID[], err ); settle() };
                     }
                 }
                 else
                 {
-                    for( let aggregate of pending )
+                    const normalized = this.#normalize( ids );
+
+                    for( const aggregate of pending )
                     {
-                        if( aggregate.ids.has( this.#normalize( ids )))
+                        if( aggregate.ids.has( normalized ))
                         {
-                            return aggregate.calls.push({ id: ids, resolve, reject });
+                            aggregate.calls.push({ id : ids, resolve, reject });
+
+                            return;
                         }
                     }
                 }
             }
 
-            if( !( aggregate = this.#aggregates.get( aggregateID )))
+            let aggregate = this.#aggregates.get( aggregateID );
+
+            if( !aggregate )
             {
-                this.#aggregates.set( aggregateID, aggregate = { id: aggregateID, ids: new Map<any, ID>(), args, calls: [] });
+                this.#aggregates.set( aggregateID, aggregate = { id : aggregateID, ids : new Map<any, ID>(), args, calls : [] });
 
                 if( this.#timeout !== undefined )
                 {
@@ -408,19 +465,19 @@ export default class Aggregator<ID, V>
             {
                 ids.forEach( id => aggregate!.ids.set( this.#normalize( id ), id ));
             }
-            else{ aggregate.ids.set( this.#normalize( ids ), ids ) }
+            else { aggregate.ids.set( this.#normalize( ids ), ids ) }
 
-            aggregate.calls.push({ id: ids, resolve: resolve as ( result: any ) => void, reject });
+            aggregate.calls.push({ id : ids, resolve : resolve as ( result: any ) => void, reject });
 
             this.#schedule_flush();
-        })
+        });
     }
 
     async drain()
     {
         while( this.#aggregates.size || this.#pending_aggregates.size )
         {
-            if( this.#aggregating )
+            if( this.#aggregates.size )
             {
                 if( this.#timer !== undefined )
                 {
@@ -430,28 +487,17 @@ export default class Aggregator<ID, V>
                 this.#aggregated_calls();
             }
 
-            if( this.#paused && this.#aggregates.size )
+            const promises: Promise<void>[] = [];
+
+            for( const set of this.#pending_aggregates.values())
             {
-                this.#aggregated_calls();
-            }
-
-            if( this.#pending_aggregates.size )
-            {
-                const promises: Promise<void>[] = [];
-
-                for( let set of this.#pending_aggregates.values() )
+                for( const aggregate of set )
                 {
-                    for( let aggregate of set )
-                    {
-                        aggregate.completion && promises.push( aggregate.completion );
-                    }
-                }
-
-                if( promises.length )
-                {
-                    await Promise.all( promises );
+                    promises.push( aggregate.completion! );
                 }
             }
+
+            await Promise.all( promises );
         }
     }
 }

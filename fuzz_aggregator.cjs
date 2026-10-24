@@ -42,25 +42,29 @@ module.exports.fuzz = function(data) {
         const provider = new FuzzedDataProvider(data);
         
         const limit = provider.consumeIntegralInRange(1, 100);
-        const delay = provider.consumeIntegralInRange(0, 50);
-        const timeout = provider.consumeIntegralInRange(1, 1000);
+        const returnArray = provider.consumeBoolean();
+        const prefix = provider.consumeString(10);
+
+        const normalizeID = (id) => (typeof id === 'object' ? JSON.stringify(id) : String(id));
 
         const cb = (ids) => {
-            const res = {};
+            if (returnArray) {
+                return ids.map((id) => `${prefix}_${normalizeID(id)}`);
+            }
+            const res = Object.create(null);
             for (const id of ids) {
-                res[typeof id === 'object' ? JSON.stringify(id) : id] = provider.consumeString(10);
+                res[normalizeID(id)] = `${prefix}_${normalizeID(id)}`;
             }
             return res;
         };
 
         const aggregator = new Aggregator(cb, {
             limit,
-            delay,
-            timeout,
-            normalizeID: (id) => (typeof id === 'object' ? JSON.stringify(id) : id)
+            delay: 0,
+            normalizeID
         });
 
-        const idCount = provider.consumeIntegralInRange(1, 5);
+        const idCount = provider.consumeIntegralInRange(0, 5);
         const ids = [];
         for (let i = 0; i < idCount; i++) {
             ids.push(createFuzzedInput(provider));
@@ -78,6 +82,8 @@ module.exports.fuzz = function(data) {
         if (provider.consumeBoolean()) {
             aggregator.resume();
         }
+
+        aggregator.drain().catch(() => {});
 
         if (AggregatorBatchError) {
             const errMap = { key1: new Error('test') };

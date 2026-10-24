@@ -1,7 +1,6 @@
 #!/bin/bash -eu
 
-npm install
-npm install --save-dev @jazzer.js/core
+npm ci
 npm run build
 
 compile_javascript_fuzzer aggregator fuzz_aggregator.cjs
