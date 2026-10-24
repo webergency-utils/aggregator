@@ -148,12 +148,14 @@ describe( 'Aggregator', () =>
         // Act
         const p1 = agg.execute( 3 );
         const p2 = agg.execute( 7 );
+        const p3 = agg.execute([ 7, 3 ]);
 
-        const [ r1, r2 ] = await Promise.all([ p1, p2 ]);
+        const [ r1, r2, r3 ] = await Promise.all([ p1, p2, p3 ]);
 
         // Assert
         expect( r1 ).toBe( 300 );
         expect( r2 ).toBe( 700 );
+        expect( r3 ).toStrictEqual([ 700, 300 ]);
     });
 
     it( 'should handle async callback', async () =>
