@@ -1,6 +1,6 @@
 {
   "name": "@webergency-utils/aggregator",
-  "version": "0.0.4",
+  "version": "0.1.0",
   "type": "module",
   "sideEffects": false,
   "description": "A highly efficient TypeScript batching utility that groups, deduplicates, and chunks concurrent asynchronous requests within the same execution tick.",
@@ -48,7 +48,7 @@
   },
   "homepage": "https://github.com/webergency-utils/aggregator#readme",
   "dependencies": {
-    "@webergency-utils/object-hash": "^1.1.2"
+    "@webergency-utils/object-hash": "^1.2.0"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
